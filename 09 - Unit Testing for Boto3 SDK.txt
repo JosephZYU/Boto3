@@ -1,5 +1,7 @@
 🧭 Rules for unit testing:
 
+# Good morning from local repo in Desktop
+
     • Must be fast ⚡in running / execution (fake the API call)
     
     • Should NOT actually create anything (should be running over and over again without AWS Bills Costs)
