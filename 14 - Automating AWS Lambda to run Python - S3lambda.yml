@@ -1,0 +1,98 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Resources:
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.7
+      Handler: index.handler
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          def EnforceS3Encryption(name):
+            s3 = boto3.resource('s3')
+            s3_client = boto3.client('s3')
+            bucket = s3.Bucket(name)
+            try:
+              s3_client.get_bucket_encryption(Bucket=bucket.name)
+              print("Encryption already set")
+            except s3_client.exceptions.ClientError as error:
+              if 'ServerSideEncryptionConfigurationNotFoundError' in str(error):
+                print(f"Encrypting {bucket.name}")
+                response = s3_client.put_bucket_encryption(
+                  Bucket=bucket.name,
+                  ServerSideEncryptionConfiguration={
+                    'Rules': [
+                      {
+                        'ApplyServerSideEncryptionByDefault': {
+                          'SSEAlgorithm': 'AES256'
+                        }
+                      }
+                    ]
+                  }
+                )
+                print(response)
+              else:
+                raise error
+          def handler(event, context):
+              EnforceS3Encryption(event['detail']['requestParameters']['bucketName'])
+  EventRule: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "EventRule"
+      EventPattern: 
+        source: 
+          - "aws.s3"
+        detail-type: 
+          - "AWS API Call via CloudTrail"
+        detail: 
+          eventSource: 
+            - "s3.amazonaws.com"
+          eventName:
+            - "CreateBucket"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "LambdaFunction"
+              - "Arn"
+          Id: "TargetFunctionV1"
+  PermissionForEventsToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: 
+        Ref: "LambdaFunction"
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: 
+        Fn::GetAtt: 
+          - "EventRule"
+          - "Arn"
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: s3
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:*
+            Resource: '*'
+      ManagedPolicyArns:
+        -  arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
