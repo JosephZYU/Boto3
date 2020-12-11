@@ -1,0 +1,100 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Resources:
+    LambdaFunction:
+        Type: AWS: : Lambda: : Function
+        Properties:
+            Role: !GetAtt LambdaExecutionRole.Arn
+            Runtime: python3.7
+            Handler: index.handler
+            Code:
+                ZipFile: |
+                   import json
+                    import boto3
+
+                    def Start_Logging(name):
+                        cloudtrail_client = boto3.client('cloudtrail')
+                        response = cloudtrail_client.start_logging(
+                            Name=name
+                        )
+                        print(response)
+                        return True
+
+                    def Get_Cloudtrail_Status(name):
+                        cloudtrail_client = boto3.client('cloudtrail')
+                        try:
+                            response = cloudtrail_client.get_trail_status(
+                                Name=name
+                            )
+                        except cloudtrail_client.exceptions.TrailNotFoundException:
+                            raise NameError(
+                                "That cloudtrail trail was not found")
+                        return response.get('IsLogging')
+
+                    def handler(event, context):
+                        trail = event['detail']['requestParameters']['name']
+                        trailName = trail.split('/')[1]
+                        if not Get_Cloudtrail_Status(trailName):
+                            Start_Logging(trailName)
+                        else:
+                            print("Logging already enabled")
+
+    EventRule:
+        Type: AWS: : Events: : Rule
+        Properties:
+            Description: "EventRule"
+            EventPattern:
+                source:
+                    - "aws.cloudtrail"
+                detail-type:
+                    - "AWS API Call via CloudTrail"
+                detail:
+                    eventSource:
+                        - "cloudtrail.amazonaws.com"
+                    eventName:
+                        - "StopLogging"
+            State: "ENABLED"
+            Targets:
+                -
+                    Arn:
+                        Fn:: GetAtt:
+                            - "LambdaFunction"
+                            - "Arn"
+                    Id: "TargetFunctionV1"
+    PermissionForEventsToInvokeLambda:
+        Type: AWS: : Lambda: : Permission
+        Properties:
+            FunctionName:
+                Ref: "LambdaFunction"
+            Action: "lambda:InvokeFunction"
+            Principal: "events.amazonaws.com"
+            SourceArn:
+                Fn:: GetAtt:
+                    - "EventRule"
+                    - "Arn"
+    LambdaExecutionRole:
+        Type: AWS: : IAM: : Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                - Effect: Allow
+                   Principal:
+                        Service:
+                        - lambda.amazonaws.com
+                    Action:
+                    - sts: AssumeRole
+            Path: "/"
+            Policies:
+            - PolicyName: cloudtrail
+               PolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                    - Effect: Allow
+                       Action:
+                        - cloudtrail: GetTrailStatus
+                        - cloudtrail: StartLogging
+                        Resource: '*'
+            ManagedPolicyArns:
+                -  arn: aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
